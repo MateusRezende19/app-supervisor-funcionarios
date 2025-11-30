@@ -22,7 +22,7 @@ def rerun():
         st.experimental_rerun()
 
 
-st.set_page_config(page_title="Supervisão de Funcionários", layout="wide")
+st.set_page_config(page_title="Artemis", layout="wide")
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -44,7 +44,7 @@ def do_logout():
 
 def show_auth_screen():
     """Tela com abas de Login e Criar conta."""
-    st.title("Supervisão de Funcionários - Autenticação")
+    st.title("Artemis")
 
     tab_login, tab_signup = st.tabs(["Login", "Criar conta"])
 
