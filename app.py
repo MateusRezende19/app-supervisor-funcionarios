@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import plotly.express as px
 
 from models import EmployeeCreate, EmployeeUpdate
 from supabase_client import (
@@ -14,6 +15,11 @@ from supabase_client import (
     delete_employee,
 )
 
+# ====== CONFIGURAÇÃO DE ADMIN ======
+ADMIN_EMAILS = {
+    "monitoramento.conae@gmail.com",  # <- coloque aqui os e-mails admin
+}
+
 # Wrapper para funcionar em versões novas/antigas do Streamlit
 def rerun():
     try:
@@ -22,7 +28,7 @@ def rerun():
         st.experimental_rerun()
 
 
-st.set_page_config(page_title="Artemis", layout="wide")
+st.set_page_config(page_title="Supervisão de Funcionários", layout="wide")
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -30,12 +36,16 @@ if "logged_in" not in st.session_state:
 if "user_email" not in st.session_state:
     st.session_state.user_email = None
 
+if "is_admin" not in st.session_state:
+    st.session_state.is_admin = False
+
 
 def do_logout():
     """Efetua logout e limpa o estado da sessão."""
     sign_out()
     st.session_state.logged_in = False
     st.session_state.user_email = None
+    st.session_state.is_admin = False
     rerun()
 
 
@@ -44,7 +54,7 @@ def do_logout():
 
 def show_auth_screen():
     """Tela com abas de Login e Criar conta."""
-    st.title("Artemis")
+    st.title("Supervisão de Funcionários - Autenticação")
 
     tab_login, tab_signup = st.tabs(["Login", "Criar conta"])
 
@@ -58,17 +68,19 @@ def show_auth_screen():
             submitted = st.form_submit_button("Entrar")
 
         if submitted:
-            if not email or not password:
+            email_clean = email.strip().lower()
+            if not email_clean or not password:
                 st.error("Preencha e-mail e senha.")
             else:
                 try:
-                    resp = sign_in(email, password)
+                    resp = sign_in(email_clean, password)
                     user = resp["user"]
                     if user is None:
-                        st.error("Credenciais inválidas.")
+                        st.error("Credenciais inválidas ou e-mail não confirmado.")
                     else:
                         st.session_state.logged_in = True
                         st.session_state.user_email = user.email
+                        st.session_state.is_admin = user.email in ADMIN_EMAILS
                         st.success("Login realizado com sucesso.")
                         rerun()
                 except Exception as e:
@@ -85,7 +97,8 @@ def show_auth_screen():
             submitted_signup = st.form_submit_button("Criar conta")
 
         if submitted_signup:
-            if not email_new or not password_new or not password_confirm:
+            email_new_clean = email_new.strip().lower()
+            if not email_new_clean or not password_new or not password_confirm:
                 st.error("Preencha todos os campos.")
             elif password_new != password_confirm:
                 st.error("As senhas não conferem.")
@@ -93,12 +106,12 @@ def show_auth_screen():
                 st.error("A senha deve ter pelo menos 6 caracteres.")
             else:
                 try:
-                    resp = sign_up(email_new, password_new)
+                    resp = sign_up(email_new_clean, password_new)
                     user = resp["user"]
                     if user is None:
                         st.warning(
                             "Conta criada, mas pode ser necessário confirmar o e-mail "
-                            "conforme config do Supabase."
+                            "no Supabase, dependendo da configuração."
                         )
                     else:
                         st.success("Conta criada com sucesso! Agora faça login na aba 'Login'.")
@@ -107,7 +120,7 @@ def show_auth_screen():
 
 
 def show_employees_screen():
-    """Tela principal de supervisão de funcionários."""
+    """Tela principal de supervisão de funcionários (apenas dados do usuário)."""
     st.sidebar.write(f"Logado como: **{st.session_state.user_email}**")
     if st.sidebar.button("Sair"):
         do_logout()
@@ -162,8 +175,8 @@ def show_employees_screen():
 
     st.markdown("---")
 
-    # ---------- LISTA DE FUNCIONÁRIOS (COM FILTROS E EXPORT) ----------
-    st.subheader("Funcionários cadastrados")
+    # ---------- LISTA DE FUNCIONÁRIOS (APENAS DO USUÁRIO) ----------
+    st.subheader("Funcionários cadastrados por você")
 
     try:
         employees = list_employees()
@@ -175,7 +188,16 @@ def show_employees_screen():
         st.info("Nenhum funcionário cadastrado ainda.")
         return
 
-    # ----- FILTROS -----
+    # Se for admin, RLS traz todos. Aqui filtramos para mostrar só os dele.
+    if st.session_state.is_admin:
+        user_email = st.session_state.user_email
+        employees = [e for e in employees if e.user_email == user_email]
+
+    if not employees:
+        st.info("Nenhum funcionário cadastrado por você.")
+        return
+
+    # Filtros locais (nome/CPF/escola) com base nos seus funcionários
     with st.expander("Filtros", expanded=False):
         filter_name = st.text_input("Filtrar por nome")
         filter_cpf = st.text_input("Filtrar por CPF")
@@ -184,14 +206,10 @@ def show_employees_screen():
 
     employees_filtered = employees
 
-    # filtro por nome (case-insensitive, contém)
     if filter_name:
         name_lower = filter_name.strip().lower()
-        employees_filtered = [
-            e for e in employees_filtered if name_lower in e.name.lower()
-        ]
+        employees_filtered = [e for e in employees_filtered if name_lower in e.name.lower()]
 
-    # filtro por CPF (compara somente dígitos)
     if filter_cpf:
         cpf_digits_filter = "".join(ch for ch in filter_cpf if ch.isdigit())
         employees_filtered = [
@@ -200,18 +218,14 @@ def show_employees_screen():
             if cpf_digits_filter in "".join(ch for ch in e.cpf if ch.isdigit())
         ]
 
-    # filtro por escola
     if school_filter_label != "Todas":
         school_id_filter = school_labels[school_filter_label]
-        employees_filtered = [
-            e for e in employees_filtered if e.school_id == school_id_filter
-        ]
+        employees_filtered = [e for e in employees_filtered if e.school_id == school_id_filter]
 
     if not employees_filtered:
         st.info("Nenhum funcionário encontrado com os filtros aplicados.")
         return
 
-    # ----- RESUMO / MÉTRICAS DOS FILTRADOS -----
     total = len(employees_filtered)
     trabalhando = sum(1 for e in employees_filtered if e.status == "Trabalhando")
     abandono = sum(1 for e in employees_filtered if e.status == "Abandono")
@@ -221,7 +235,7 @@ def show_employees_screen():
     col_b.metric("Trabalhando", trabalhando)
     col_c.metric("Abandono", abandono)
 
-    # ----- EXPORTAR PARA EXCEL (DADOS FILTRADOS) -----
+    # Exportar apenas os dados desse supervisor filtrados
     df = pd.DataFrame(
         [
             {
@@ -235,22 +249,21 @@ def show_employees_screen():
             for e in employees_filtered
         ]
     )
-
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Funcionarios")
     output.seek(0)
 
     st.download_button(
-        label="📥 Baixar dados em Excel (filtros aplicados)",
+        label="📥 Baixar dados em Excel (seus funcionários filtrados)",
         data=output,
-        file_name="funcionarios_supervisao.xlsx",
+        file_name="funcionarios_supervisor.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
     st.markdown("---")
 
-    # ----- LISTAGEM DETALHADA -----
+    # Listagem detalhada + ações
     for emp in employees_filtered:
         with st.container():
             cols = st.columns([0.35, 0.2, 0.2, 0.1, 0.15])
@@ -287,7 +300,6 @@ def show_employees_screen():
                     except Exception as e:
                         st.error(f"Erro ao excluir funcionário: {e}")
 
-            # Form de edição
             if st.session_state.get(f"editing_{emp.id}", False):
                 st.markdown("**Editar funcionário**")
                 with st.form(f"edit_form_{emp.id}"):
@@ -328,13 +340,131 @@ def show_employees_screen():
                     rerun()
 
 
+def show_admin_dashboard():
+    """Dashboard para usuário admin: vê todos os funcionários de todos supervisores."""
+    st.sidebar.write(f"Logado como (ADMIN): **{st.session_state.user_email}**")
+    st.title("Dashboard Administrativo - Todos os Funcionários")
+
+    try:
+        schools = list_schools()
+        school_map = {s.id: s.name for s in schools}
+    except Exception:
+        school_map = {}
+
+    try:
+        employees = list_employees()  # RLS libera todos para admin
+    except Exception as e:
+        st.error(f"Erro ao carregar funcionários: {e}")
+        return
+
+    if not employees:
+        st.info("Nenhum funcionário cadastrado ainda.")
+        return
+
+    df = pd.DataFrame(
+        [
+            {
+                "Nome": e.name,
+                "CPF": e.cpf,
+                "Escola": school_map.get(e.school_id, f"ID {e.school_id}"),
+                "Situação": e.status,
+                "Supervisor": e.user_email,
+                "Criado em": e.created_at,
+                "Atualizado em": e.updated_at,
+            }
+            for e in employees
+        ]
+    )
+
+    # Métricas gerais
+    total = len(df)
+    total_supervisores = df["Supervisor"].nunique()
+    total_escolas = df["Escola"].nunique()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total de funcionários", total)
+    col2.metric("Supervisores ativos", total_supervisores)
+    col3.metric("Escolas", total_escolas)
+
+    st.markdown("---")
+
+           # ----- GRÁFICOS EM PIZZA LADO A LADO -----
+    col1, col2, col3 = st.columns(3)
+
+    # Funcionários por situação
+    with col1:
+        st.subheader("Por situação")
+        sit_counts = df["Situação"].value_counts().reset_index()
+        sit_counts.columns = ["Situação", "Quantidade"]
+        fig_sit = px.pie(
+            sit_counts,
+            names="Situação",
+            values="Quantidade",
+            hole=0.3,
+            color_discrete_sequence=px.colors.qualitative.Set1,  # cores fortes
+        )
+        fig_sit.update_traces(textposition="inside", textinfo="percent+label")
+        st.plotly_chart(fig_sit, use_container_width=True)
+
+    # Funcionários por escola
+    with col2:
+        st.subheader("Por escola")
+        esc_counts = df["Escola"].value_counts().reset_index()
+        esc_counts.columns = ["Escola", "Quantidade"]
+        fig_esc = px.pie(
+            esc_counts,
+            names="Escola",
+            values="Quantidade",
+            hole=0.3,
+            color_discrete_sequence=px.colors.qualitative.Dark2,  # cores fortes
+        )
+        fig_esc.update_traces(textposition="inside", textinfo="percent+label")
+        st.plotly_chart(fig_esc, use_container_width=True)
+
+    # Funcionários por supervisor
+    with col3:
+        st.subheader("Por supervisor")
+        sup_counts = df["Supervisor"].value_counts().reset_index()
+        sup_counts.columns = ["Supervisor", "Quantidade"]
+        fig_sup = px.pie(
+            sup_counts,
+            names="Supervisor",
+            values="Quantidade",
+            hole=0.3,
+            color_discrete_sequence=px.colors.qualitative.Bold,  # cores fortes
+        )
+        fig_sup.update_traces(textposition="inside", textinfo="percent+label")
+        st.plotly_chart(fig_sup, use_container_width=True)
+
+
+    # Exportar tudo que o admin vê
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Funcionarios")
+    output.seek(0)
+
+    st.download_button(
+        label="📥 Baixar todos os dados em Excel (admin)",
+        data=output,
+        file_name="funcionarios_admin.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 # ------------------ MAIN ------------------
 
 def main():
     if not st.session_state.logged_in:
         show_auth_screen()
     else:
-        show_employees_screen()
+        if st.session_state.is_admin:
+            tab1, tab2 = st.tabs(["Meus funcionários", "Dashboard Admin"])
+            with tab1:
+                show_employees_screen()
+            with tab2:
+                show_admin_dashboard()
+        else:
+            show_employees_screen()
 
 
 if __name__ == "__main__":

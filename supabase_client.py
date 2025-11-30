@@ -66,10 +66,6 @@ def sign_in(email: str, password: str) -> dict:
     return {"user": response.user, "session": response.session}
 
 
-# ... resto dos imports e código acima mantidos ...
-
-# ---------- AUTENTICAÇÃO ----------
-
 def sign_out() -> None:
     """
     Faz logout e reseta o client Supabase.
@@ -79,27 +75,34 @@ def sign_out() -> None:
     if _supabase is None:
         return
 
-    # Tenta encerrar a sessão atual (se houver)
     try:
         _supabase.auth.sign_out()
     except Exception:
         pass
 
-    # Zera a instância; get_supabase_client() criará outra sem auth
     _supabase = None
 
+
+def _get_current_user():
+    sb = get_supabase_client()
+    response = sb.auth.get_user()
+    return getattr(response, "user", None)
 
 
 def get_current_user_id() -> Optional[str]:
     """
     Retorna o ID do usuário logado baseado na sessão atual.
     """
-    sb = get_supabase_client()
-    response = sb.auth.get_user()
-    user = getattr(response, "user", None)
-    if user is not None:
-        return user.id
-    return None
+    user = _get_current_user()
+    return user.id if user is not None else None
+
+
+def get_current_user_email() -> Optional[str]:
+    """
+    Retorna o e-mail do usuário logado baseado na sessão atual.
+    """
+    user = _get_current_user()
+    return user.email if user is not None else None
 
 
 # ---------- SCHOOLS (escolas) ----------
@@ -119,8 +122,9 @@ def list_schools() -> List[School]:
 
 def list_employees() -> List[Employee]:
     """
-    Lista funcionários do supervisor logado.
-    O RLS garante que só os funcionários do usuário atual sejam retornados.
+    Lista funcionários conforme RLS:
+    - supervisor comum: somente os próprios
+    - admin (policy por e-mail): todos os funcionários
     """
     sb = get_supabase_client()
     response = (
@@ -139,11 +143,13 @@ def create_employee(data: EmployeeCreate) -> Employee:
     """
     sb = get_supabase_client()
     user_id = get_current_user_id()
-    if not user_id:
+    user_email = get_current_user_email()
+    if not user_id or not user_email:
         raise RuntimeError("Nenhum usuário logado para cadastrar funcionário.")
 
     payload = {
         "user_id": user_id,
+        "user_email": user_email,
         "name": data.name,
         "cpf": data.cpf,
         "school_id": data.school_id,

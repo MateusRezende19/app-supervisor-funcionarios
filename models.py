@@ -2,7 +2,6 @@ from pydantic import BaseModel, Field, validator
 from typing import Optional, Literal
 from uuid import UUID
 
-
 # Situações permitidas
 StatusType = Literal["Trabalhando", "Abandono"]
 
@@ -31,16 +30,12 @@ class EmployeeBase(BaseModel):
 
 
 class EmployeeCreate(EmployeeBase):
-    """
-    Dados para cadastrar novo funcionário.
-    """
+    """Dados para cadastrar novo funcionário."""
     pass
 
 
 class EmployeeUpdate(BaseModel):
-    """
-    Campos opcionais para atualização de funcionário.
-    """
+    """Campos opcionais para atualização de funcionário."""
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     cpf: Optional[str] = Field(None, min_length=11, max_length=11)
     school_id: Optional[int] = None
@@ -62,5 +57,6 @@ class Employee(EmployeeBase):
     """
     id: UUID
     user_id: UUID
+    user_email: str
     created_at: str
     updated_at: str
