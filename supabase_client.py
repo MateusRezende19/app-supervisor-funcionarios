@@ -1,15 +1,17 @@
 import os
 from typing import Any, List, Optional
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from datetime import datetime, timezone
 
 from models import (
     Employee,
     EmployeeCreate,
     EmployeeUpdate,
     School,
+    Observation,
+    ObservationCreate,
 )
 
 # Carrega variáveis do .env
@@ -36,6 +38,7 @@ def get_supabase_client() -> Client:
 
 
 # ---------- AUTENTICAÇÃO ----------
+
 
 def _attach_session_to_postgrest(client: Client, session) -> None:
     """
@@ -108,6 +111,7 @@ def get_current_user_email() -> Optional[str]:
 
 # ---------- SCHOOLS (escolas) ----------
 
+
 def list_schools() -> List[School]:
     """
     Retorna a lista de escolas cadastradas.
@@ -120,6 +124,7 @@ def list_schools() -> List[School]:
 
 
 # ---------- EMPLOYEES (funcionários) ----------
+
 
 def list_employees() -> List[Employee]:
     """
@@ -202,10 +207,55 @@ def update_employee(employee_id: str, data: EmployeeUpdate) -> Employee:
     return Employee(**response.data[0])
 
 
-
 def delete_employee(employee_id: str) -> None:
     """
     Deleta um funcionário específico do supervisor logado.
     """
     sb = get_supabase_client()
     sb.table("employees").delete().eq("id", employee_id).execute()
+
+
+# ---------- OBSERVATIONS (observações / reclamações) ----------
+
+
+def create_observation(data: ObservationCreate) -> Observation:
+    """
+    Cria uma nova observação/reclamação para o usuário logado.
+    - RLS garante que a linha ficará vinculada ao user_id atual.
+    """
+    sb = get_supabase_client()
+    user_id = get_current_user_id()
+    user_email = get_current_user_email()
+    if not user_id or not user_email:
+        raise RuntimeError("Nenhum usuário logado para cadastrar observação.")
+
+    payload = {
+        "user_id": user_id,
+        "user_email": user_email,
+        "type": data.type,
+        "employee_id": data.employee_id,
+        "school_id": data.school_id,
+        "text": data.text,
+    }
+
+    response = sb.table("observations").insert(payload).execute()
+    if not response.data:
+        raise RuntimeError("Erro ao criar observação no Supabase.")
+
+    return Observation(**response.data[0])
+
+
+def list_observations() -> List[Observation]:
+    """
+    Lista observações do usuário logado conforme RLS.
+    RLS da tabela 'observations' deve restringir por user_id.
+    """
+    sb = get_supabase_client()
+    response = (
+        sb.table("observations")
+        .select("*")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    rows = response.data or []
+    return [Observation(**row) for row in rows]

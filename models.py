@@ -11,6 +11,9 @@ class School(BaseModel):
     name: str
 
 
+# ================= FUNCIONÁRIOS =================
+
+
 class EmployeeBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     cpf: str = Field(..., min_length=11, max_length=11)
@@ -60,3 +63,37 @@ class Employee(EmployeeBase):
     user_email: str
     created_at: str
     updated_at: str
+
+
+# ================= OBSERVAÇÕES =================
+
+ObservationType = Literal["COLABORADOR", "ESCOLA"]
+
+
+class ObservationCreate(BaseModel):
+    """
+    Dados para criação de uma observação/reclamação.
+
+    - type: 'COLABORADOR' ou 'ESCOLA'
+    - employee_id: obrigatório quando type = 'COLABORADOR'
+    - school_id: obrigatório nos dois casos (sempre associada a uma escola)
+    """
+    type: ObservationType
+    # para criação, usamos str porque vamos mandar direto para o Supabase
+    employee_id: Optional[str] = None  # UUID em string
+    school_id: Optional[int] = None
+    text: str
+
+
+class Observation(BaseModel):
+    """
+    Representação completa de uma observação vinda do Supabase.
+    """
+    id: UUID
+    user_id: UUID
+    user_email: str
+    type: ObservationType
+    employee_id: Optional[UUID] = None
+    school_id: Optional[int] = None
+    text: str
+    created_at: str

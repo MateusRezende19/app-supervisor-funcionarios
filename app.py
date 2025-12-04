@@ -6,7 +6,11 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from models import EmployeeCreate, EmployeeUpdate
+from models import (
+    EmployeeCreate,
+    EmployeeUpdate,
+    ObservationCreate,   # <-- NOVO
+)
 from supabase_client import (
     sign_in,
     sign_up,
@@ -16,6 +20,8 @@ from supabase_client import (
     create_employee,
     update_employee,
     delete_employee,
+    create_observation,  # <-- NOVO
+    list_observations,   # <-- NOVO
 )
 
 # ====== CONFIGURAÇÃO DE ADMIN ======
@@ -65,6 +71,10 @@ if "user_email" not in st.session_state:
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 
+# view atual do supervisor: "employees" ou "observations"
+if "current_view" not in st.session_state:
+    st.session_state.current_view = "employees"
+
 
 def do_logout():
     """Efetua logout e limpa o estado da sessão."""
@@ -72,17 +82,18 @@ def do_logout():
     st.session_state.logged_in = False
     st.session_state.user_email = None
     st.session_state.is_admin = False
+    st.session_state.current_view = "employees"
     rerun()
 
 
 def render_sidebar_header():
-    """Logo + info de usuário na barra lateral."""
+    """Logo + info de usuário na barra lateral + navegação."""
     # Logo na sidebar
     if LOGO_PATH.exists():
         st.sidebar.image(str(LOGO_PATH), use_container_width=True)
 
-    # Info de usuário + botão sair
     if st.session_state.logged_in:
+        # Info de usuário
         if st.session_state.is_admin:
             st.sidebar.write(f"Logado como (ADMIN): **{st.session_state.user_email}**")
         else:
@@ -90,6 +101,18 @@ def render_sidebar_header():
 
         if st.sidebar.button("Sair"):
             do_logout()
+
+        # Navegação só para supervisor
+        if not st.session_state.is_admin:
+            st.sidebar.markdown("---")
+            if st.session_state.current_view == "employees":
+                if st.sidebar.button("📝 Observações"):
+                    st.session_state.current_view = "observations"
+                    rerun()
+            else:
+                if st.sidebar.button("👥 Funcionários"):
+                    st.session_state.current_view = "employees"
+                    rerun()
 
 
 # ------------------ TELAS ------------------
@@ -135,6 +158,7 @@ def show_auth_screen():
                         st.session_state.logged_in = True
                         st.session_state.user_email = user.email
                         st.session_state.is_admin = user.email in ADMIN_EMAILS
+                        st.session_state.current_view = "employees"
                         st.success("Login realizado com sucesso.")
                         rerun()
                 except Exception as e:
@@ -270,7 +294,7 @@ def show_employees_screen():
         st.info("Nenhum funcionário cadastrado ainda.")
         return
 
-    # Se for admin, RLS traz todos. Aqui filtramos para mostrar só os dele.
+    # Se por algum motivo is_admin estiver True, ainda assim filtramos só dele
     if st.session_state.is_admin:
         user_email = st.session_state.user_email
         employees = [e for e in employees if e.user_email == user_email]
@@ -494,6 +518,214 @@ def show_employees_screen():
             rerun()
 
 
+def show_observations_screen():
+    """Tela de observações / reclamações do supervisor."""
+    render_sidebar_header()
+    st.title("Observações / Reclamações")
+
+    # Carregar escolas
+    try:
+        schools = list_schools()
+    except Exception as e:
+        st.error(f"Erro ao carregar escolas: {e}")
+        return
+
+    if not schools:
+        st.warning("Nenhuma escola cadastrada. Cadastre escolas direto no Supabase (tabela 'schools').")
+        return
+
+    school_map = {s.id: s.name for s in schools}
+    school_labels = {s.name: s.id for s in schools}
+
+    # Carregar funcionários do supervisor (RLS garante só dele)
+    try:
+        employees = list_employees()
+    except Exception as e:
+        st.error(f"Erro ao carregar funcionários: {e}")
+        return
+
+    employees_by_id = {str(e.id): e for e in employees}
+    emp_label_map = {
+        f"{e.name} - {school_map.get(e.school_id, f'ID {e.school_id}')}"
+        : str(e.id)
+        for e in employees
+    }
+
+    # ---------- NOVA OBSERVAÇÃO ----------
+    st.subheader("Registrar nova observação")
+
+    with st.form("obs_form", clear_on_submit=True):
+        tipo = st.radio("Tipo de observação", ["Colaborador", "Escola"])
+
+        selected_employee_id = None
+        selected_school_id = None
+
+        # Seleção de colaborador/escola conforme tipo
+        if tipo == "Colaborador":
+            emp_options = ["Selecione o colaborador"] + list(emp_label_map.keys())
+            emp_label = st.selectbox("Colaborador", emp_options, index=0)
+
+            # Escola sempre obrigatória, mas podemos sugerir a do colaborador
+            school_options = ["Selecione a escola"] + list(school_labels.keys())
+
+            default_index = 0
+            if emp_label != "Selecione o colaborador":
+                emp_id = emp_label_map[emp_label]
+                selected_employee_id = emp_id
+                emp_obj = employees_by_id[emp_id]
+                # tenta setar escola padrão do colaborador
+                if emp_obj.school_id in school_map:
+                    school_name_default = school_map[emp_obj.school_id]
+                    default_index = 1 + list(school_labels.keys()).index(school_name_default)
+
+            selected_school_label = st.selectbox(
+                "Escola", school_options, index=default_index
+            )
+            if selected_school_label != "Selecione a escola":
+                selected_school_id = school_labels[selected_school_label]
+
+        else:  # tipo == "Escola"
+            school_options = ["Selecione a escola"] + list(school_labels.keys())
+            selected_school_label = st.selectbox("Escola", school_options, index=0)
+            if selected_school_label != "Selecione a escola":
+                selected_school_id = school_labels[selected_school_label]
+
+        texto = st.text_area("Descrição da observação")
+        submitted = st.form_submit_button("Registrar observação")
+
+    if submitted:
+        texto_clean = texto.strip()
+
+        if tipo == "Colaborador":
+            if (
+                not selected_employee_id
+                or not selected_school_id
+                or not texto_clean
+            ):
+                st.warning("Selecione o colaborador, a escola e preencha a observação.")
+            else:
+                try:
+                    create_observation(
+                        ObservationCreate(
+                            type="COLABORADOR",
+                            employee_id=selected_employee_id,
+                            school_id=selected_school_id,
+                            text=texto_clean,
+                        )
+                    )
+                    st.success("Observação registrada com sucesso.")
+                    rerun()
+                except Exception as e:
+                    st.error(f"Erro ao registrar observação: {e}")
+        else:
+            if not selected_school_id or not texto_clean:
+                st.warning("Selecione a escola e preencha a observação.")
+            else:
+                try:
+                    create_observation(
+                        ObservationCreate(
+                            type="ESCOLA",
+                            employee_id=None,
+                            school_id=selected_school_id,
+                            text=texto_clean,
+                        )
+                    )
+                    st.success("Observação registrada com sucesso.")
+                    rerun()
+                except Exception as e:
+                    st.error(f"Erro ao registrar observação: {e}")
+
+    st.markdown("---")
+
+    # ---------- LISTA DE OBSERVAÇÕES ----------
+    st.subheader("Minhas observações cadastradas")
+
+    try:
+        observations = list_observations()
+    except Exception as e:
+        st.error(f"Erro ao carregar observações: {e}")
+        return
+
+    if not observations:
+        st.info("Nenhuma observação cadastrada ainda.")
+        return
+
+    # Preparar dados para filtros
+    escolas_usadas = sorted(
+        {school_map.get(o.school_id, f"ID {o.school_id}") for o in observations if o.school_id}
+    )
+    colaboradores_usados = sorted(
+        {
+            employees_by_id.get(str(o.employee_id)).name
+            for o in observations
+            if o.employee_id and str(o.employee_id) in employees_by_id
+        }
+    )
+
+    # Filtros
+    with st.expander("Filtros", expanded=False):
+        tipo_filter = st.selectbox("Filtrar por tipo", ["Todos", "Colaborador", "Escola"])
+        escola_filter = st.selectbox(
+            "Filtrar por escola", ["Todas"] + escolas_usadas
+        )
+        colaborador_filter = st.selectbox(
+            "Filtrar por colaborador", ["Todos"] + colaboradores_usados
+        )
+
+    obs_filtered = observations
+
+    if tipo_filter == "Colaborador":
+        obs_filtered = [o for o in obs_filtered if o.type == "COLABORADOR"]
+    elif tipo_filter == "Escola":
+        obs_filtered = [o for o in obs_filtered if o.type == "ESCOLA"]
+
+    if escola_filter != "Todas":
+        obs_filtered = [
+            o
+            for o in obs_filtered
+            if school_map.get(o.school_id, f"ID {o.school_id}") == escola_filter
+        ]
+
+    if colaborador_filter != "Todos":
+        obs_filtered = [
+            o
+            for o in obs_filtered
+            if (
+                o.employee_id
+                and str(o.employee_id) in employees_by_id
+                and employees_by_id[str(o.employee_id)].name == colaborador_filter
+            )
+        ]
+
+    if not obs_filtered:
+        st.info("Nenhuma observação encontrada com os filtros selecionados.")
+        return
+
+    # Montar tabela
+    rows = []
+    for o in obs_filtered:
+        emp_name = "-"
+        if o.employee_id and str(o.employee_id) in employees_by_id:
+            emp_name = employees_by_id[str(o.employee_id)].name.upper()
+
+        escola_name = school_map.get(o.school_id, f"ID {o.school_id}") if o.school_id else "-"
+
+        tipo_legivel = "Colaborador" if o.type == "COLABORADOR" else "Escola"
+
+        rows.append(
+            {
+                "Colaborador": emp_name,
+                "Escola": escola_name,
+                "Tipo": tipo_legivel,
+                "Observação": o.text,
+                "Data": format_br_datetime(o.created_at),
+            }
+        )
+
+    df_obs = pd.DataFrame(rows)
+    st.dataframe(df_obs, use_container_width=True)
+
+
 def show_admin_dashboard():
     """Dashboard para usuário admin: visão consolidada de todos os funcionários."""
     render_sidebar_header()
@@ -586,7 +818,6 @@ def show_admin_dashboard():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    # ===== TABELA DETALHADA DE FUNCIONÁRIOS =====
     st.markdown("### Funcionários cadastrados")
 
     df_table = pd.DataFrame(
@@ -613,8 +844,11 @@ def main():
             # Admin vê somente o dashboard
             show_admin_dashboard()
         else:
-            # Supervisor comum vê a tela de cadastro/lista
-            show_employees_screen()
+            # Supervisor: muda entre Funcionários e Observações
+            if st.session_state.current_view == "observations":
+                show_observations_screen()
+            else:
+                show_employees_screen()
 
 
 if __name__ == "__main__":
