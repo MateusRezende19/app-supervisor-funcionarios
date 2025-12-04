@@ -817,7 +817,7 @@ def show_observations_screen():
 def show_admin_dashboard():
     """Dashboard para usuário admin: visão consolidada de todos os funcionários."""
     render_sidebar_header()
-    st.title("Dashboard Administrativo - Visão Geral")
+    st.title("Hub - Painel Administrativo")
 
     try:
         schools = list_schools()
