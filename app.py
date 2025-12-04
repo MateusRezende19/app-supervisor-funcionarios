@@ -223,7 +223,7 @@ def show_employees_screen():
     if "filters" not in st.session_state:
         st.session_state.filters = {"name": "", "cpf": "", "school": "Todas"}
 
-    st.title("Supervisão de Funcionários")
+    st.title("Hub de Colaboradores")
 
     # Mensagem de ação (ex: cadastro realizado)
     if "last_action_message" in st.session_state:
@@ -842,7 +842,7 @@ def show_admin_dashboard():
                 "Nome": e.name,
                 "CPF": e.cpf,
                 "Escola": school_map.get(e.school_id, f"ID {e.school_id}"),
-                "Função": e.role,
+                "Função": getattr(e, "role", None),
                 "Situação": e.status,
                 "Supervisor": e.user_email,
                 "Cadastrado em (Brasília)": format_br_datetime(e.created_at),
@@ -861,6 +861,21 @@ def show_admin_dashboard():
     col1.metric("Total de funcionários", total)
     col2.metric("Trabalhando", total_trabalhando)
     col3.metric("Abandono", total_abandono)
+
+    st.markdown("---")
+
+    # ===== QUANTIDADE TOTAL POR FUNÇÃO =====
+    st.subheader("Total por função")
+
+    role_counts = df["Função"].fillna("Não informado").value_counts()
+
+    r1c1, r1c2, r1c3 = st.columns(3)
+    for col, role in zip([r1c1, r1c2, r1c3], JOB_ROLES[:3]):
+        col.metric(role, int(role_counts.get(role, 0)))
+
+    r2c1, r2c2, _ = st.columns(3)
+    for col, role in zip([r2c1, r2c2], JOB_ROLES[3:]):
+        col.metric(role, int(role_counts.get(role, 0)))
 
     st.markdown("---")
 
