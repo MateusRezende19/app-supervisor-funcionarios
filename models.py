@@ -5,6 +5,15 @@ from uuid import UUID
 # Situações permitidas
 StatusType = Literal["Trabalhando", "Abandono"]
 
+# Funções permitidas
+RoleType = Literal[
+    "Auxiliar de Limpeza",
+    "Agente de Higienização",
+    "Limpador de Vidros",
+    "Lider",
+    "Encarregado",
+]
+
 
 class School(BaseModel):
     id: int
@@ -19,6 +28,7 @@ class EmployeeBase(BaseModel):
     cpf: str = Field(..., min_length=11, max_length=11)
     school_id: int
     status: StatusType
+    role: RoleType  # nova coluna: função do colaborador
 
     @validator("cpf")
     def cpf_must_be_11_digits(cls, v: str) -> str:
@@ -43,6 +53,7 @@ class EmployeeUpdate(BaseModel):
     cpf: Optional[str] = Field(None, min_length=11, max_length=11)
     school_id: Optional[int] = None
     status: Optional[StatusType] = None
+    role: Optional[RoleType] = None  # função também pode ser atualizada
 
     @validator("cpf")
     def cpf_must_be_11_digits(cls, v: Optional[str]) -> Optional[str]:

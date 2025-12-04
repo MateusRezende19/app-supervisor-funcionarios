@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from models import (
     EmployeeCreate,
     EmployeeUpdate,
-    ObservationCreate,   # <-- NOVO
+    ObservationCreate,
 )
 from supabase_client import (
     sign_in,
@@ -20,14 +20,24 @@ from supabase_client import (
     create_employee,
     update_employee,
     delete_employee,
-    create_observation,  # <-- NOVO
-    list_observations,   # <-- NOVO
+    create_observation,
+    list_observations,
+    update_observation,  # para editar observações
 )
 
 # ====== CONFIGURAÇÃO DE ADMIN ======
 ADMIN_EMAILS = {
-    "monitoramento.conae@gmail.com",  # <- coloque aqui os e-mails admin
+    "monitoramento.conae@gmail.com",  # <- e-mails admin
 }
+
+# Lista de funções possíveis do colaborador
+JOB_ROLES = [
+    "Auxiliar de Limpeza",
+    "Agente de Higienização",
+    "Limpador de Vidros",
+    "Lider",
+    "Encarregado",
+]
 
 TZ_BR = ZoneInfo("America/Sao_Paulo")
 
@@ -40,12 +50,10 @@ def format_br_datetime(dt_str: str) -> str:
     if not dt_str:
         return ""
     try:
-        # Supabase geralmente retorna '2025-11-30T17:47:29.210272+00:00'
         dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
         dt_br = dt.astimezone(TZ_BR)
         return dt_br.strftime("%d/%m/%Y %H:%M")
     except Exception:
-        # Se algo der errado, devolve o original
         return dt_str
 
 
@@ -88,7 +96,6 @@ def do_logout():
 
 def render_sidebar_header():
     """Logo + info de usuário na barra lateral + navegação."""
-    # Logo na sidebar
     if LOGO_PATH.exists():
         st.sidebar.image(str(LOGO_PATH), use_container_width=True)
 
@@ -119,82 +126,89 @@ def render_sidebar_header():
 
 
 def show_auth_screen():
-    """Tela com abas de Login e Criar conta."""
+    """Tela com abas de Login e Criar conta, logo e formulário centralizados."""
 
-    # Logo centralizado (menor)
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if LOGO_PATH.exists():
-            st.image(str(LOGO_PATH), width=260)
-
-    # Título centralizado
     st.markdown(
-        "<h1 style='text-align:center;'>Bem-vindo, Supervisor(a)</h1>",
+        """
+        <style>
+        .block-container {
+            padding-top: 2rem !important;
+        }
+        </style>
+        """,
         unsafe_allow_html=True,
     )
 
-    tab_login, tab_signup = st.tabs(["Login", "Criar conta"])
+    col_esq, col_centro, col_dir = st.columns([1, 2, 1])
 
-    # ----- LOGIN -----
-    with tab_login:
-        st.subheader("Entrar")
+    with col_centro:
+        if LOGO_PATH.exists():
+            st.image(str(LOGO_PATH), width=220)
 
-        with st.form("login_form"):
-            email = st.text_input("E-mail")
-            password = st.text_input("Senha", type="password")
-            submitted = st.form_submit_button("Entrar")
+        tab_login, tab_signup = st.tabs(["Login", "Criar conta"])
 
-        if submitted:
-            email_clean = email.strip().lower()
-            if not email_clean or not password:
-                st.error("Preencha e-mail e senha.")
-            else:
-                try:
-                    resp = sign_in(email_clean, password)
-                    user = resp["user"]
-                    if user is None:
-                        st.error("Credenciais inválidas ou e-mail não confirmado.")
-                    else:
-                        st.session_state.logged_in = True
-                        st.session_state.user_email = user.email
-                        st.session_state.is_admin = user.email in ADMIN_EMAILS
-                        st.session_state.current_view = "employees"
-                        st.success("Login realizado com sucesso.")
-                        rerun()
-                except Exception as e:
-                    st.error(f"Erro ao fazer login: {e}")
+        # ----- LOGIN -----
+        with tab_login:
+            st.subheader("Entrar")
 
-    # ----- CRIAR CONTA -----
-    with tab_signup:
-        st.subheader("Criar nova conta (supervisor)")
+            with st.form("login_form"):
+                email = st.text_input("E-mail")
+                password = st.text_input("Senha", type="password")
+                submitted = st.form_submit_button("Entrar")
 
-        with st.form("signup_form"):
-            email_new = st.text_input("E-mail (novo supervisor)")
-            password_new = st.text_input("Senha", type="password")
-            password_confirm = st.text_input("Confirmar senha", type="password")
-            submitted_signup = st.form_submit_button("Criar conta")
+            if submitted:
+                email_clean = email.strip().lower()
+                if not email_clean or not password:
+                    st.error("Preencha e-mail e senha.")
+                else:
+                    try:
+                        resp = sign_in(email_clean, password)
+                        user = resp["user"]
+                        if user is None:
+                            st.error("Credenciais inválidas ou e-mail não confirmado.")
+                        else:
+                            st.session_state.logged_in = True
+                            st.session_state.user_email = user.email
+                            st.session_state.is_admin = user.email in ADMIN_EMAILS
+                            st.session_state.current_view = "employees"
+                            st.success("Login realizado com sucesso.")
+                            rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao fazer login: {e}")
 
-        if submitted_signup:
-            email_new_clean = email_new.strip().lower()
-            if not email_new_clean or not password_new or not password_confirm:
-                st.error("Preencha todos os campos.")
-            elif password_new != password_confirm:
-                st.error("As senhas não conferem.")
-            elif len(password_new) < 6:
-                st.error("A senha deve ter pelo menos 6 caracteres.")
-            else:
-                try:
-                    resp = sign_up(email_new_clean, password_new)
-                    user = resp["user"]
-                    if user is None:
-                        st.warning(
-                            "Conta criada, mas pode ser necessário confirmar o e-mail "
-                            "no Supabase, dependendo da configuração."
-                        )
-                    else:
-                        st.success("Conta criada com sucesso! Agora faça login na aba 'Login'.")
-                except Exception as e:
-                    st.error(f"Erro ao criar conta: {e}")
+        # ----- CRIAR CONTA -----
+        with tab_signup:
+            st.subheader("Criar nova conta (supervisor)")
+
+            with st.form("signup_form"):
+                email_new = st.text_input("E-mail (novo supervisor)")
+                password_new = st.text_input("Senha", type="password")
+                password_confirm = st.text_input("Confirmar senha", type="password")
+                submitted_signup = st.form_submit_button("Criar conta")
+
+            if submitted_signup:
+                email_new_clean = email_new.strip().lower()
+                if not email_new_clean or not password_new or not password_confirm:
+                    st.error("Preencha todos os campos.")
+                elif password_new != password_confirm:
+                    st.error("As senhas não conferem.")
+                elif len(password_new) < 6:
+                    st.error("A senha deve ter pelo menos 6 caracteres.")
+                else:
+                    try:
+                        resp = sign_up(email_new_clean, password_new)
+                        user = resp["user"]
+                        if user is None:
+                            st.warning(
+                                "Conta criada, mas pode ser necessário confirmar o e-mail "
+                                "no Supabase, dependendo da configuração."
+                            )
+                        else:
+                            st.success(
+                                "Conta criada com sucesso! Agora faça login na aba 'Login'."
+                            )
+                    except Exception as e:
+                        st.error(f"Erro ao criar conta: {e}")
 
 
 def show_employees_screen():
@@ -205,13 +219,13 @@ def show_employees_screen():
     if "emp_page" not in st.session_state:
         st.session_state.emp_page = 1
 
-    # inicializa filtros persistentes
+    # filtros persistentes
     if "filters" not in st.session_state:
         st.session_state.filters = {"name": "", "cpf": "", "school": "Todas"}
 
     st.title("Supervisão de Funcionários")
 
-    # Mensagem de ação (ex: cadastro realizado) persistida via session_state
+    # Mensagem de ação (ex: cadastro realizado)
     if "last_action_message" in st.session_state:
         msg = st.session_state.pop("last_action_message")
         if msg:
@@ -225,12 +239,13 @@ def show_employees_screen():
         return
 
     if not schools:
-        st.warning("Nenhuma escola cadastrada. Cadastre escolas direto no Supabase (tabela 'schools').")
+        st.warning(
+            "Nenhuma escola cadastrada. Cadastre escolas direto no Supabase (tabela 'schools')."
+        )
         return
 
     # id -> nome
     school_map = {s.id: s.name for s in schools}
-    # label visível = só o nome
     school_labels = {s.name: s.id for s in schools}
 
     # ---------- FORM NOVO FUNCIONÁRIO ----------
@@ -240,11 +255,15 @@ def show_employees_screen():
         name = st.text_input("Nome do funcionário", max_chars=200)
         cpf = st.text_input("CPF (somente números ou com pontuação)", max_chars=14)
 
-        # selectbox de escola com placeholder
+        # Escola
         school_options = ["Selecione a escola"] + list(school_labels.keys())
         selected_school_label = st.selectbox("Escola", school_options, index=0)
 
-        # selectbox de situação com placeholder
+        # Função
+        role_options = ["Selecione a função"] + JOB_ROLES
+        role = st.selectbox("Função", role_options, index=0)
+
+        # Situação
         status_options = ["Selecione a situação", "Trabalhando", "Abandono"]
         status = st.selectbox("Situação", status_options, index=0)
 
@@ -258,9 +277,10 @@ def show_employees_screen():
             not name_clean
             or not cpf_clean
             or selected_school_label == "Selecione a escola"
+            or role == "Selecione a função"
             or status == "Selecione a situação"
         ):
-            st.warning("Nome, CPF, escola e situação são obrigatórios.")
+            st.warning("Nome, CPF, escola, função e situação são obrigatórios.")
         else:
             school_id = school_labels[selected_school_label]
             try:
@@ -270,11 +290,13 @@ def show_employees_screen():
                         cpf=cpf_clean,
                         school_id=school_id,
                         status=status,
+                        role=role,
                     )
                 )
-                # volta para a 1ª página e mostra mensagem após o rerun
                 st.session_state.emp_page = 1
-                st.session_state.last_action_message = "Funcionário cadastrado com sucesso."
+                st.session_state.last_action_message = (
+                    "Funcionário cadastrado com sucesso."
+                )
                 rerun()
             except Exception as e:
                 st.error(f"Erro ao cadastrar funcionário: {e}")
@@ -294,7 +316,7 @@ def show_employees_screen():
         st.info("Nenhum funcionário cadastrado ainda.")
         return
 
-    # Se por algum motivo is_admin estiver True, ainda assim filtramos só dele
+    # Se for admin logado (edge case), ainda mostra só dele
     if st.session_state.is_admin:
         user_email = st.session_state.user_email
         employees = [e for e in employees if e.user_email == user_email]
@@ -306,7 +328,6 @@ def show_employees_screen():
     # ----- FILTROS COM BOTÃO "APLICAR" -----
     with st.expander("Filtros", expanded=False):
         with st.form("filter_form"):
-            # valores atuais dos filtros (persistidos)
             current_filters = st.session_state.filters
             filter_name_input = st.text_input(
                 "Filtrar por nome", value=current_filters["name"]
@@ -334,11 +355,10 @@ def show_employees_screen():
                 "cpf": filter_cpf_input.strip(),
                 "school": school_filter_label_input,
             }
-            # ao mudar filtro, volta para página 1
             st.session_state.emp_page = 1
             rerun()
 
-    # usa os filtros aplicados (salvos em session_state)
+    # usa os filtros aplicados
     filter_name = st.session_state.filters["name"]
     filter_cpf = st.session_state.filters["cpf"]
     school_filter_label = st.session_state.filters["school"]
@@ -347,7 +367,9 @@ def show_employees_screen():
 
     if filter_name:
         name_lower = filter_name.strip().lower()
-        employees_filtered = [e for e in employees_filtered if name_lower in e.name.lower()]
+        employees_filtered = [
+            e for e in employees_filtered if name_lower in e.name.lower()
+        ]
 
     if filter_cpf:
         cpf_digits_filter = "".join(ch for ch in filter_cpf if ch.isdigit())
@@ -359,7 +381,9 @@ def show_employees_screen():
 
     if school_filter_label != "Todas":
         school_id_filter = school_labels[school_filter_label]
-        employees_filtered = [e for e in employees_filtered if e.school_id == school_id_filter]
+        employees_filtered = [
+            e for e in employees_filtered if e.school_id == school_id_filter
+        ]
 
     if not employees_filtered:
         st.info("Nenhum funcionário encontrado com os filtros aplicados.")
@@ -370,7 +394,6 @@ def show_employees_screen():
     total_registros = len(employees_filtered)
     total_paginas = (total_registros - 1) // page_size + 1
 
-    # ajusta página atual se passou do limite
     if st.session_state.emp_page > total_paginas:
         st.session_state.emp_page = total_paginas
     if st.session_state.emp_page < 1:
@@ -381,7 +404,7 @@ def show_employees_screen():
     end_idx = start_idx + page_size
     employees_page = employees_filtered[start_idx:end_idx]
 
-    # Métricas gerais (considerando todos filtrados, não só a página)
+    # Métricas gerais
     total = len(employees_filtered)
     trabalhando = sum(1 for e in employees_filtered if e.status == "Trabalhando")
     abandono = sum(1 for e in employees_filtered if e.status == "Abandono")
@@ -391,13 +414,14 @@ def show_employees_screen():
     col_b.metric("Trabalhando", trabalhando)
     col_c.metric("Abandono", abandono)
 
-    # Exportar todos os filtrados (não só a página)
+    # Exportar todos os filtrados
     df = pd.DataFrame(
         [
             {
                 "Nome": e.name,
                 "CPF": e.cpf,
                 "Escola": school_map.get(e.school_id, f"ID {e.school_id}"),
+                "Função": e.role,
                 "Situação": e.status,
                 "Cadastrado em (Brasília)": format_br_datetime(e.created_at),
                 "Atualizado em (Brasília)": format_br_datetime(e.updated_at),
@@ -427,18 +451,37 @@ def show_employees_screen():
             with cols[0]:
                 st.markdown(f"**{emp.name}**")
                 st.caption(f"CPF: {emp.cpf}")
-                st.caption(f"Escola: {school_map.get(emp.school_id, f'ID {emp.school_id}')}")
-                st.caption(f"Cadastrado em: {format_br_datetime(emp.created_at)}")
-                st.caption(f"Atualizado em: {format_br_datetime(emp.updated_at)}")
+                st.caption(
+                    f"Escola: {school_map.get(emp.school_id, f'ID {emp.school_id}')}"
+                )
+                st.caption(f"Função: {emp.role}")
+                st.caption(
+                    f"Cadastrado em: {format_br_datetime(emp.created_at)}"
+                )
+                st.caption(
+                    f"Atualizado em: {format_br_datetime(emp.updated_at)}"
+                )
 
             with cols[1]:
-                status_badge = "🟢 Trabalhando" if emp.status == "Trabalhando" else "🔴 Abandono"
+                status_badge = (
+                    "🟢 Trabalhando"
+                    if emp.status == "Trabalhando"
+                    else "🔴 Abandono"
+                )
                 st.markdown(f"**Situação:** {status_badge}")
 
             with cols[2]:
-                toggle_label = "Marcar Abandono" if emp.status == "Trabalhando" else "Marcar Trabalhando"
+                toggle_label = (
+                    "Marcar Abandono"
+                    if emp.status == "Trabalhando"
+                    else "Marcar Trabalhando"
+                )
                 if st.button(toggle_label, key=f"toggle_{emp.id}"):
-                    new_status = "Abandono" if emp.status == "Trabalhando" else "Trabalhando"
+                    new_status = (
+                        "Abandono"
+                        if emp.status == "Trabalhando"
+                        else "Trabalhando"
+                    )
                     try:
                         update_employee(str(emp.id), EmployeeUpdate(status=new_status))
                         rerun()
@@ -458,6 +501,7 @@ def show_employees_screen():
                     except Exception as e:
                         st.error(f"Erro ao excluir funcionário: {e}")
 
+            # Formulário de edição
             if st.session_state.get(f"editing_{emp.id}", False):
                 st.markdown("**Editar funcionário**")
                 with st.form(f"edit_form_{emp.id}"):
@@ -467,6 +511,13 @@ def show_employees_screen():
                         "Escola",
                         list(school_labels.keys()),
                         index=list(school_labels.values()).index(emp.school_id),
+                    )
+                    new_role = st.selectbox(
+                        "Função",
+                        JOB_ROLES,
+                        index=JOB_ROLES.index(emp.role)
+                        if emp.role in JOB_ROLES
+                        else 0,
                     )
                     new_status = st.selectbox(
                         "Situação",
@@ -486,6 +537,7 @@ def show_employees_screen():
                                 cpf=new_cpf.strip() or emp.cpf,
                                 school_id=school_labels[edit_school_label],
                                 status=new_status,
+                                role=new_role,
                             ),
                         )
                         st.session_state[f"editing_{emp.id}"] = False
@@ -531,13 +583,15 @@ def show_observations_screen():
         return
 
     if not schools:
-        st.warning("Nenhuma escola cadastrada. Cadastre escolas direto no Supabase (tabela 'schools').")
+        st.warning(
+            "Nenhuma escola cadastrada. Cadastre escolas direto no Supabase (tabela 'schools')."
+        )
         return
 
     school_map = {s.id: s.name for s in schools}
     school_labels = {s.name: s.id for s in schools}
 
-    # Carregar funcionários do supervisor (RLS garante só dele)
+    # Carregar funcionários do supervisor
     try:
         employees = list_employees()
     except Exception as e:
@@ -560,23 +614,21 @@ def show_observations_screen():
         selected_employee_id = None
         selected_school_id = None
 
-        # Seleção de colaborador/escola conforme tipo
         if tipo == "Colaborador":
             emp_options = ["Selecione o colaborador"] + list(emp_label_map.keys())
             emp_label = st.selectbox("Colaborador", emp_options, index=0)
 
-            # Escola sempre obrigatória, mas podemos sugerir a do colaborador
             school_options = ["Selecione a escola"] + list(school_labels.keys())
-
             default_index = 0
             if emp_label != "Selecione o colaborador":
                 emp_id = emp_label_map[emp_label]
                 selected_employee_id = emp_id
                 emp_obj = employees_by_id[emp_id]
-                # tenta setar escola padrão do colaborador
                 if emp_obj.school_id in school_map:
                     school_name_default = school_map[emp_obj.school_id]
-                    default_index = 1 + list(school_labels.keys()).index(school_name_default)
+                    default_index = 1 + list(school_labels.keys()).index(
+                        school_name_default
+                    )
 
             selected_school_label = st.selectbox(
                 "Escola", school_options, index=default_index
@@ -584,7 +636,7 @@ def show_observations_screen():
             if selected_school_label != "Selecione a escola":
                 selected_school_id = school_labels[selected_school_label]
 
-        else:  # tipo == "Escola"
+        else:  # Escola
             school_options = ["Selecione a escola"] + list(school_labels.keys())
             selected_school_label = st.selectbox("Escola", school_options, index=0)
             if selected_school_label != "Selecione a escola":
@@ -597,12 +649,10 @@ def show_observations_screen():
         texto_clean = texto.strip()
 
         if tipo == "Colaborador":
-            if (
-                not selected_employee_id
-                or not selected_school_id
-                or not texto_clean
-            ):
-                st.warning("Selecione o colaborador, a escola e preencha a observação.")
+            if not selected_employee_id or not selected_school_id or not texto_clean:
+                st.warning(
+                    "Selecione o colaborador, a escola e preencha a observação."
+                )
             else:
                 try:
                     create_observation(
@@ -650,9 +700,12 @@ def show_observations_screen():
         st.info("Nenhuma observação cadastrada ainda.")
         return
 
-    # Preparar dados para filtros
     escolas_usadas = sorted(
-        {school_map.get(o.school_id, f"ID {o.school_id}") for o in observations if o.school_id}
+        {
+            school_map.get(o.school_id, f"ID {o.school_id}")
+            for o in observations
+            if o.school_id
+        }
     )
     colaboradores_usados = sorted(
         {
@@ -662,7 +715,6 @@ def show_observations_screen():
         }
     )
 
-    # Filtros
     with st.expander("Filtros", expanded=False):
         tipo_filter = st.selectbox("Filtrar por tipo", ["Todos", "Colaborador", "Escola"])
         escola_filter = st.selectbox(
@@ -701,29 +753,65 @@ def show_observations_screen():
         st.info("Nenhuma observação encontrada com os filtros selecionados.")
         return
 
-    # Montar tabela
-    rows = []
+    # === LISTAGEM DETALHADA COM EDIÇÃO ===
     for o in obs_filtered:
         emp_name = "-"
         if o.employee_id and str(o.employee_id) in employees_by_id:
             emp_name = employees_by_id[str(o.employee_id)].name.upper()
 
-        escola_name = school_map.get(o.school_id, f"ID {o.school_id}") if o.school_id else "-"
-
-        tipo_legivel = "Colaborador" if o.type == "COLABORADOR" else "Escola"
-
-        rows.append(
-            {
-                "Colaborador": emp_name,
-                "Escola": escola_name,
-                "Tipo": tipo_legivel,
-                "Observação": o.text,
-                "Data": format_br_datetime(o.created_at),
-            }
+        escola_name = (
+            school_map.get(o.school_id, f"ID {o.school_id}") if o.school_id else "-"
         )
+        tipo_legivel = "Colaborador" if o.type == "COLABORADOR" else "Escola"
+        data_label = format_br_datetime(o.created_at)
 
-    df_obs = pd.DataFrame(rows)
-    st.dataframe(df_obs, use_container_width=True)
+        with st.container():
+            st.markdown("---")
+            c1, c2, c3, c4, c5 = st.columns([0.18, 0.27, 0.15, 0.20, 0.10])
+
+            with c1:
+                st.markdown("**Colaborador**")
+                st.write(emp_name)
+
+            with c2:
+                st.markdown("**Escola**")
+                st.write(escola_name)
+
+            with c3:
+                st.markdown("**Tipo**")
+                st.write(tipo_legivel)
+
+            with c4:
+                st.markdown("**Data**")
+                st.write(data_label)
+
+            with c5:
+                if st.button("Editar", key=f"edit_obs_{o.id}"):
+                    st.session_state[f"editing_obs_{o.id}"] = True
+
+            if st.session_state.get(f"editing_obs_{o.id}", False):
+                st.markdown("**Observação (editar)**")
+                with st.form(f"edit_obs_form_{o.id}"):
+                    new_text = st.text_area("", value=o.text, height=120)
+                    col_save, col_cancel = st.columns(2)
+                    save_clicked = col_save.form_submit_button("Salvar")
+                    cancel_clicked = col_cancel.form_submit_button("Cancelar")
+
+                if save_clicked:
+                    try:
+                        update_observation(str(o.id), new_text.strip())
+                        st.session_state[f"editing_obs_{o.id}"] = False
+                        st.success("Observação atualizada com sucesso.")
+                        rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao atualizar observação: {e}")
+
+                if cancel_clicked:
+                    st.session_state[f"editing_obs_{o.id}"] = False
+                    rerun()
+            else:
+                st.markdown("**Observação**")
+                st.write(o.text)
 
 
 def show_admin_dashboard():
@@ -754,6 +842,7 @@ def show_admin_dashboard():
                 "Nome": e.name,
                 "CPF": e.cpf,
                 "Escola": school_map.get(e.school_id, f"ID {e.school_id}"),
+                "Função": e.role,
                 "Situação": e.status,
                 "Supervisor": e.user_email,
                 "Cadastrado em (Brasília)": format_br_datetime(e.created_at),
@@ -822,8 +911,9 @@ def show_admin_dashboard():
 
     df_table = pd.DataFrame(
         {
-            "Nome": df["Nome"].str.upper(),  # nome em maiúsculas
+            "Nome": df["Nome"].str.upper(),
             "Escola": df["Escola"],
+            "Função": df["Função"],
             "Situação": df["Situação"],
             "Data de cadastro": df["Cadastrado em (Brasília)"],
             "Data da última atualização": df["Atualizado em (Brasília)"],
@@ -841,10 +931,8 @@ def main():
         show_auth_screen()
     else:
         if st.session_state.is_admin:
-            # Admin vê somente o dashboard
             show_admin_dashboard()
         else:
-            # Supervisor: muda entre Funcionários e Observações
             if st.session_state.current_view == "observations":
                 show_observations_screen()
             else:

@@ -160,6 +160,7 @@ def create_employee(data: EmployeeCreate) -> Employee:
         "cpf": data.cpf,
         "school_id": data.school_id,
         "status": data.status,
+        "role": data.role,  # NOVO: função do colaborador
     }
 
     response = sb.table("employees").insert(payload).execute()
@@ -186,6 +187,8 @@ def update_employee(employee_id: str, data: EmployeeUpdate) -> Employee:
         update_payload["school_id"] = data.school_id
     if data.status is not None:
         update_payload["status"] = data.status
+    if data.role is not None:
+        update_payload["role"] = data.role  # NOVO: atualizar função
 
     # sempre que fizer update, atualiza o updated_at
     update_payload["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -259,3 +262,29 @@ def list_observations() -> List[Observation]:
     )
     rows = response.data or []
     return [Observation(**row) for row in rows]
+
+
+def update_observation(observation_id: str, new_text: str) -> Observation:
+    """
+    Atualiza o texto de uma observação específica do usuário logado.
+    Também atualiza o campo updated_at em UTC.
+    RLS garante que só altera observações do próprio usuário.
+    """
+    sb = get_supabase_client()
+
+    update_payload = {
+        "text": new_text,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    response = (
+        sb.table("observations")
+        .update(update_payload)
+        .eq("id", observation_id)
+        .execute()
+    )
+
+    if not response.data:
+        raise RuntimeError("Observação não encontrada ou não pertence ao usuário logado.")
+
+    return Observation(**response.data[0])
