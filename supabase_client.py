@@ -3,6 +3,7 @@ from typing import Any, List, Optional
 
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from datetime import datetime, timezone
 
 from models import (
     Employee,
@@ -167,6 +168,7 @@ def update_employee(employee_id: str, data: EmployeeUpdate) -> Employee:
     """
     Atualiza um funcionário específico do supervisor logado.
     RLS garante que só atualiza se pertencer ao usuário.
+    Também atualiza updated_at com o horário atual em UTC.
     """
     sb = get_supabase_client()
     update_payload: dict[str, Any] = {}
@@ -180,7 +182,11 @@ def update_employee(employee_id: str, data: EmployeeUpdate) -> Employee:
     if data.status is not None:
         update_payload["status"] = data.status
 
-    if not update_payload:
+    # sempre que fizer update, atualiza o updated_at
+    update_payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    if len(update_payload) == 1 and "updated_at" in update_payload:
+        # nada foi alterado além do updated_at -> não faz sentido atualizar
         raise ValueError("Nenhum campo para atualizar.")
 
     response = (
@@ -194,6 +200,7 @@ def update_employee(employee_id: str, data: EmployeeUpdate) -> Employee:
         raise RuntimeError("Funcionário não encontrado ou não pertence ao usuário logado.")
 
     return Employee(**response.data[0])
+
 
 
 def delete_employee(employee_id: str) -> None:

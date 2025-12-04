@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 import plotly.express as px
+from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from models import EmployeeCreate, EmployeeUpdate
 from supabase_client import (
@@ -20,6 +23,25 @@ ADMIN_EMAILS = {
     "monitoramento.conae@gmail.com",  # <- coloque aqui os e-mails admin
 }
 
+TZ_BR = ZoneInfo("America/Sao_Paulo")
+
+def format_br_datetime(dt_str: str) -> str:
+    """
+    Converte string ISO (UTC) vinda do Supabase para data/hora em Brasília.
+    Formato exibido: dd/mm/aaaa HH:MM
+    """
+    if not dt_str:
+        return ""
+    try:
+        # Supabase geralmente retorna '2025-11-30T17:47:29.210272+00:00'
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        dt_br = dt.astimezone(TZ_BR)
+        return dt_br.strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        # Se algo der errado, devolve o original
+        return dt_str
+
+
 # Wrapper para funcionar em versões novas/antigas do Streamlit
 def rerun():
     try:
@@ -29,6 +51,9 @@ def rerun():
 
 
 st.set_page_config(page_title="Supervisão de Funcionários", layout="wide")
+
+BASE_DIR = Path(__file__).parent
+LOGO_PATH = BASE_DIR / "assets" / "artemis_logo.png"
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -49,12 +74,40 @@ def do_logout():
     rerun()
 
 
+def render_sidebar_header():
+    """Logo + info de usuário na barra lateral."""
+    # Logo na sidebar
+    if LOGO_PATH.exists():
+        st.sidebar.image(str(LOGO_PATH), use_container_width=True)
+
+    # Info de usuário + botão sair
+    if st.session_state.logged_in:
+        if st.session_state.is_admin:
+            st.sidebar.write(f"Logado como (ADMIN): **{st.session_state.user_email}**")
+        else:
+            st.sidebar.write(f"Logado como: **{st.session_state.user_email}**")
+
+        if st.sidebar.button("Sair"):
+            do_logout()
+
+
 # ------------------ TELAS ------------------
 
 
 def show_auth_screen():
     """Tela com abas de Login e Criar conta."""
-    st.title("Supervisão de Funcionários - Autenticação")
+
+    # Logo centralizado (menor)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if LOGO_PATH.exists():
+            st.image(str(LOGO_PATH), width=260)
+
+    # Título centralizado
+    st.markdown(
+        "<h1 style='text-align:center;'>Supervisão de Funcionários - Autenticação</h1>",
+        unsafe_allow_html=True,
+    )
 
     tab_login, tab_signup = st.tabs(["Login", "Criar conta"])
 
@@ -121,9 +174,7 @@ def show_auth_screen():
 
 def show_employees_screen():
     """Tela principal de supervisão de funcionários (apenas dados do usuário)."""
-    st.sidebar.write(f"Logado como: **{st.session_state.user_email}**")
-    if st.sidebar.button("Sair"):
-        do_logout()
+    render_sidebar_header()
 
     st.title("Supervisão de Funcionários")
 
@@ -138,8 +189,10 @@ def show_employees_screen():
         st.warning("Nenhuma escola cadastrada. Cadastre escolas direto no Supabase (tabela 'schools').")
         return
 
+    # id -> nome
     school_map = {s.id: s.name for s in schools}
-    school_labels = {f"{s.name} (ID {s.id})": s.id for s in schools}
+    # label visível = só o nome
+    school_labels = {s.name: s.id for s in schools}
 
     # ---------- FORM NOVO FUNCIONÁRIO ----------
     st.subheader("Cadastrar novo funcionário")
@@ -243,8 +296,8 @@ def show_employees_screen():
                 "CPF": e.cpf,
                 "Escola": school_map.get(e.school_id, f"ID {e.school_id}"),
                 "Situação": e.status,
-                "Criado em": e.created_at,
-                "Atualizado em": e.updated_at,
+                "Cadastrado em (Brasília)": format_br_datetime(e.created_at),
+                "Atualizado em (Brasília)": format_br_datetime(e.updated_at),
             }
             for e in employees_filtered
         ]
@@ -272,6 +325,8 @@ def show_employees_screen():
                 st.markdown(f"**{emp.name}**")
                 st.caption(f"CPF: {emp.cpf}")
                 st.caption(f"Escola: {school_map.get(emp.school_id, f'ID {emp.school_id}')}")
+                st.caption(f"Cadastrado em: {format_br_datetime(emp.created_at)}")
+                st.caption(f"Atualizado em: {format_br_datetime(emp.updated_at)}")
 
             with cols[1]:
                 status_badge = "🟢 Trabalhando" if emp.status == "Trabalhando" else "🔴 Abandono"
@@ -342,7 +397,7 @@ def show_employees_screen():
 
 def show_admin_dashboard():
     """Dashboard para usuário admin: vê todos os funcionários de todos supervisores."""
-    st.sidebar.write(f"Logado como (ADMIN): **{st.session_state.user_email}**")
+    render_sidebar_header()
     st.title("Dashboard Administrativo - Todos os Funcionários")
 
     try:
@@ -369,8 +424,8 @@ def show_admin_dashboard():
                 "Escola": school_map.get(e.school_id, f"ID {e.school_id}"),
                 "Situação": e.status,
                 "Supervisor": e.user_email,
-                "Criado em": e.created_at,
-                "Atualizado em": e.updated_at,
+                "Cadastrado em (Brasília)": format_br_datetime(e.created_at),
+                "Atualizado em (Brasília)": format_br_datetime(e.updated_at),
             }
             for e in employees
         ]
@@ -388,11 +443,11 @@ def show_admin_dashboard():
 
     st.markdown("---")
 
-           # ----- GRÁFICOS EM PIZZA LADO A LADO -----
-    col1, col2, col3 = st.columns(3)
+    # ----- GRÁFICOS EM PIZZA LADO A LADO -----
+    colg1, colg2, colg3 = st.columns(3)
 
     # Funcionários por situação
-    with col1:
+    with colg1:
         st.subheader("Por situação")
         sit_counts = df["Situação"].value_counts().reset_index()
         sit_counts.columns = ["Situação", "Quantidade"]
@@ -407,7 +462,7 @@ def show_admin_dashboard():
         st.plotly_chart(fig_sit, use_container_width=True)
 
     # Funcionários por escola
-    with col2:
+    with colg2:
         st.subheader("Por escola")
         esc_counts = df["Escola"].value_counts().reset_index()
         esc_counts.columns = ["Escola", "Quantidade"]
@@ -422,7 +477,7 @@ def show_admin_dashboard():
         st.plotly_chart(fig_esc, use_container_width=True)
 
     # Funcionários por supervisor
-    with col3:
+    with colg3:
         st.subheader("Por supervisor")
         sup_counts = df["Supervisor"].value_counts().reset_index()
         sup_counts.columns = ["Supervisor", "Quantidade"]
@@ -435,7 +490,6 @@ def show_admin_dashboard():
         )
         fig_sup.update_traces(textposition="inside", textinfo="percent+label")
         st.plotly_chart(fig_sup, use_container_width=True)
-
 
     # Exportar tudo que o admin vê
     output = BytesIO()
