@@ -25,6 +25,7 @@ ADMIN_EMAILS = {
 
 TZ_BR = ZoneInfo("America/Sao_Paulo")
 
+
 def format_br_datetime(dt_str: str) -> str:
     """
     Converte string ISO (UTC) vinda do Supabase para data/hora em Brasília.
@@ -50,7 +51,7 @@ def rerun():
         st.experimental_rerun()
 
 
-st.set_page_config(page_title="Supervisão de Funcionários", layout="wide")
+st.set_page_config(page_title="Artemis", layout="wide")
 
 BASE_DIR = Path(__file__).parent
 LOGO_PATH = BASE_DIR / "assets" / "artemis_logo.png"
@@ -105,7 +106,7 @@ def show_auth_screen():
 
     # Título centralizado
     st.markdown(
-        "<h1 style='text-align:center;'>Supervisão de Funcionários - Autenticação</h1>",
+        "<h1 style='text-align:center;'>Bem-vindo, Supervisor(a)</h1>",
         unsafe_allow_html=True,
     )
 
@@ -176,7 +177,21 @@ def show_employees_screen():
     """Tela principal de supervisão de funcionários (apenas dados do usuário)."""
     render_sidebar_header()
 
+    # inicializa página da lista (paginação)
+    if "emp_page" not in st.session_state:
+        st.session_state.emp_page = 1
+
+    # inicializa filtros persistentes
+    if "filters" not in st.session_state:
+        st.session_state.filters = {"name": "", "cpf": "", "school": "Todas"}
+
     st.title("Supervisão de Funcionários")
+
+    # Mensagem de ação (ex: cadastro realizado) persistida via session_state
+    if "last_action_message" in st.session_state:
+        msg = st.session_state.pop("last_action_message")
+        if msg:
+            st.success(msg)
 
     # Carregar escolas
     try:
@@ -200,18 +215,30 @@ def show_employees_screen():
     with st.form("new_employee_form", clear_on_submit=True):
         name = st.text_input("Nome do funcionário", max_chars=200)
         cpf = st.text_input("CPF (somente números ou com pontuação)", max_chars=14)
-        selected_school_label = st.selectbox("Escola", list(school_labels.keys()))
-        status = st.selectbox("Situação", ["Trabalhando", "Abandono"])
+
+        # selectbox de escola com placeholder
+        school_options = ["Selecione a escola"] + list(school_labels.keys())
+        selected_school_label = st.selectbox("Escola", school_options, index=0)
+
+        # selectbox de situação com placeholder
+        status_options = ["Selecione a situação", "Trabalhando", "Abandono"]
+        status = st.selectbox("Situação", status_options, index=0)
+
         submitted = st.form_submit_button("Cadastrar")
 
     if submitted:
         name_clean = name.strip()
         cpf_clean = cpf.strip()
-        school_id = school_labels[selected_school_label]
 
-        if not name_clean or not cpf_clean:
-            st.warning("Nome e CPF são obrigatórios.")
+        if (
+            not name_clean
+            or not cpf_clean
+            or selected_school_label == "Selecione a escola"
+            or status == "Selecione a situação"
+        ):
+            st.warning("Nome, CPF, escola e situação são obrigatórios.")
         else:
+            school_id = school_labels[selected_school_label]
             try:
                 create_employee(
                     EmployeeCreate(
@@ -221,7 +248,9 @@ def show_employees_screen():
                         status=status,
                     )
                 )
-                st.success("Funcionário cadastrado com sucesso.")
+                # volta para a 1ª página e mostra mensagem após o rerun
+                st.session_state.emp_page = 1
+                st.session_state.last_action_message = "Funcionário cadastrado com sucesso."
                 rerun()
             except Exception as e:
                 st.error(f"Erro ao cadastrar funcionário: {e}")
@@ -250,12 +279,45 @@ def show_employees_screen():
         st.info("Nenhum funcionário cadastrado por você.")
         return
 
-    # Filtros locais (nome/CPF/escola) com base nos seus funcionários
+    # ----- FILTROS COM BOTÃO "APLICAR" -----
     with st.expander("Filtros", expanded=False):
-        filter_name = st.text_input("Filtrar por nome")
-        filter_cpf = st.text_input("Filtrar por CPF")
-        school_filter_options = ["Todas"] + list(school_labels.keys())
-        school_filter_label = st.selectbox("Filtrar por escola", school_filter_options, index=0)
+        with st.form("filter_form"):
+            # valores atuais dos filtros (persistidos)
+            current_filters = st.session_state.filters
+            filter_name_input = st.text_input(
+                "Filtrar por nome", value=current_filters["name"]
+            )
+            filter_cpf_input = st.text_input(
+                "Filtrar por CPF", value=current_filters["cpf"]
+            )
+
+            school_filter_options = ["Todas"] + list(school_labels.keys())
+            current_school = current_filters["school"]
+            try:
+                idx_school = school_filter_options.index(current_school)
+            except ValueError:
+                idx_school = 0
+
+            school_filter_label_input = st.selectbox(
+                "Filtrar por escola", school_filter_options, index=idx_school
+            )
+
+            apply_filters = st.form_submit_button("Aplicar filtros")
+
+        if apply_filters:
+            st.session_state.filters = {
+                "name": filter_name_input.strip(),
+                "cpf": filter_cpf_input.strip(),
+                "school": school_filter_label_input,
+            }
+            # ao mudar filtro, volta para página 1
+            st.session_state.emp_page = 1
+            rerun()
+
+    # usa os filtros aplicados (salvos em session_state)
+    filter_name = st.session_state.filters["name"]
+    filter_cpf = st.session_state.filters["cpf"]
+    school_filter_label = st.session_state.filters["school"]
 
     employees_filtered = employees
 
@@ -279,6 +341,23 @@ def show_employees_screen():
         st.info("Nenhum funcionário encontrado com os filtros aplicados.")
         return
 
+    # ===== PAGINAÇÃO =====
+    page_size = 10
+    total_registros = len(employees_filtered)
+    total_paginas = (total_registros - 1) // page_size + 1
+
+    # ajusta página atual se passou do limite
+    if st.session_state.emp_page > total_paginas:
+        st.session_state.emp_page = total_paginas
+    if st.session_state.emp_page < 1:
+        st.session_state.emp_page = 1
+
+    page = st.session_state.emp_page
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    employees_page = employees_filtered[start_idx:end_idx]
+
+    # Métricas gerais (considerando todos filtrados, não só a página)
     total = len(employees_filtered)
     trabalhando = sum(1 for e in employees_filtered if e.status == "Trabalhando")
     abandono = sum(1 for e in employees_filtered if e.status == "Abandono")
@@ -288,7 +367,7 @@ def show_employees_screen():
     col_b.metric("Trabalhando", trabalhando)
     col_c.metric("Abandono", abandono)
 
-    # Exportar apenas os dados desse supervisor filtrados
+    # Exportar todos os filtrados (não só a página)
     df = pd.DataFrame(
         [
             {
@@ -316,8 +395,8 @@ def show_employees_screen():
 
     st.markdown("---")
 
-    # Listagem detalhada + ações
-    for emp in employees_filtered:
+    # Lista detalhada APENAS da página atual
+    for emp in employees_page:
         with st.container():
             cols = st.columns([0.35, 0.2, 0.2, 0.1, 0.15])
 
@@ -394,11 +473,31 @@ def show_employees_screen():
                     st.session_state[f"editing_{emp.id}"] = False
                     rerun()
 
+    # Controles de paginação
+    st.markdown("---")
+    col_prev, col_info, col_next = st.columns([1, 2, 1])
+
+    with col_prev:
+        if st.button("◀ Página anterior", disabled=(page <= 1)):
+            st.session_state.emp_page = page - 1
+            rerun()
+
+    with col_info:
+        st.markdown(
+            f"<p style='text-align:center;'>Página {page} de {total_paginas}</p>",
+            unsafe_allow_html=True,
+        )
+
+    with col_next:
+        if st.button("Próxima página ▶", disabled=(page >= total_paginas)):
+            st.session_state.emp_page = page + 1
+            rerun()
+
 
 def show_admin_dashboard():
-    """Dashboard para usuário admin: vê todos os funcionários de todos supervisores."""
+    """Dashboard para usuário admin: visão consolidada de todos os funcionários."""
     render_sidebar_header()
-    st.title("Dashboard Administrativo - Todos os Funcionários")
+    st.title("Dashboard Administrativo - Visão Geral")
 
     try:
         schools = list_schools()
@@ -416,6 +515,7 @@ def show_admin_dashboard():
         st.info("Nenhum funcionário cadastrado ainda.")
         return
 
+    # DataFrame base
     df = pd.DataFrame(
         [
             {
@@ -431,65 +531,47 @@ def show_admin_dashboard():
         ]
     )
 
-    # Métricas gerais
+    # ===== MÉTRICAS GERAIS POR SITUAÇÃO =====
     total = len(df)
-    total_supervisores = df["Supervisor"].nunique()
-    total_escolas = df["Escola"].nunique()
+    total_trabalhando = (df["Situação"] == "Trabalhando").sum()
+    total_abandono = (df["Situação"] == "Abandono").sum()
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Total de funcionários", total)
-    col2.metric("Supervisores ativos", total_supervisores)
-    col3.metric("Escolas", total_escolas)
+    col2.metric("Trabalhando", total_trabalhando)
+    col3.metric("Abandono", total_abandono)
 
     st.markdown("---")
 
-    # ----- GRÁFICOS EM PIZZA LADO A LADO -----
-    colg1, colg2, colg3 = st.columns(3)
+    # ===== GRÁFICO DE BARRAS: FUNCIONÁRIOS POR SUPERVISOR =====
+    st.subheader("Funcionários cadastrados por supervisor")
 
-    # Funcionários por situação
-    with colg1:
-        st.subheader("Por situação")
-        sit_counts = df["Situação"].value_counts().reset_index()
-        sit_counts.columns = ["Situação", "Quantidade"]
-        fig_sit = px.pie(
-            sit_counts,
-            names="Situação",
-            values="Quantidade",
-            hole=0.3,
-            color_discrete_sequence=px.colors.qualitative.Set1,  # cores fortes
-        )
-        fig_sit.update_traces(textposition="inside", textinfo="percent+label")
-        st.plotly_chart(fig_sit, use_container_width=True)
+    df_sup = (
+        df.groupby("Supervisor")["Nome"]
+        .count()
+        .reset_index(name="Quantidade")
+        .sort_values("Quantidade", ascending=False)
+    )
 
-    # Funcionários por escola
-    with colg2:
-        st.subheader("Por escola")
-        esc_counts = df["Escola"].value_counts().reset_index()
-        esc_counts.columns = ["Escola", "Quantidade"]
-        fig_esc = px.pie(
-            esc_counts,
-            names="Escola",
-            values="Quantidade",
-            hole=0.3,
-            color_discrete_sequence=px.colors.qualitative.Dark2,  # cores fortes
-        )
-        fig_esc.update_traces(textposition="inside", textinfo="percent+label")
-        st.plotly_chart(fig_esc, use_container_width=True)
+    fig_sup_bar = px.bar(
+        df_sup,
+        x="Supervisor",
+        y="Quantidade",
+        text="Quantidade",
+        color="Supervisor",
+        color_discrete_sequence=px.colors.qualitative.Set2,
+    )
+    fig_sup_bar.update_traces(textposition="outside")
+    fig_sup_bar.update_layout(
+        xaxis_title="Supervisor",
+        yaxis_title="Quantidade de funcionários",
+        showlegend=False,
+        margin=dict(l=40, r=40, t=40, b=80),
+    )
 
-    # Funcionários por supervisor
-    with colg3:
-        st.subheader("Por supervisor")
-        sup_counts = df["Supervisor"].value_counts().reset_index()
-        sup_counts.columns = ["Supervisor", "Quantidade"]
-        fig_sup = px.pie(
-            sup_counts,
-            names="Supervisor",
-            values="Quantidade",
-            hole=0.3,
-            color_discrete_sequence=px.colors.qualitative.Bold,  # cores fortes
-        )
-        fig_sup.update_traces(textposition="inside", textinfo="percent+label")
-        st.plotly_chart(fig_sup, use_container_width=True)
+    st.plotly_chart(fig_sup_bar, use_container_width=True)
+
+    st.markdown("---")
 
     # Exportar tudo que o admin vê
     output = BytesIO()
@@ -504,20 +586,34 @@ def show_admin_dashboard():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+    # ===== TABELA DETALHADA DE FUNCIONÁRIOS =====
+    st.markdown("### Funcionários cadastrados")
+
+    df_table = pd.DataFrame(
+        {
+            "Nome": df["Nome"].str.upper(),  # nome em maiúsculas
+            "Escola": df["Escola"],
+            "Situação": df["Situação"],
+            "Data de cadastro": df["Cadastrado em (Brasília)"],
+            "Data da última atualização": df["Atualizado em (Brasília)"],
+        }
+    )
+
+    st.dataframe(df_table, use_container_width=True)
+
 
 # ------------------ MAIN ------------------
+
 
 def main():
     if not st.session_state.logged_in:
         show_auth_screen()
     else:
         if st.session_state.is_admin:
-            tab1, tab2 = st.tabs(["Meus funcionários", "Dashboard Admin"])
-            with tab1:
-                show_employees_screen()
-            with tab2:
-                show_admin_dashboard()
+            # Admin vê somente o dashboard
+            show_admin_dashboard()
         else:
+            # Supervisor comum vê a tela de cadastro/lista
             show_employees_screen()
 
 
